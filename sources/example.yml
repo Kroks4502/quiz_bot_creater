@@ -1,0 +1,13 @@
+quiz_title: "Тестовый квиз"
+quiz_desc: "Проверьте создание квиза!"
+questions:
+  - title: "Вопрос первый. Ваши действия?"
+    incorrect_answers:
+      - "Нет 1"
+      - "Нет 2"
+    correct_answer: "Да"
+  - title: "Вопрос второй. Ваши действия?"
+    incorrect_answers:
+      - "Нет 1"
+      - "Нет 2"
+    correct_answer: "Да"
