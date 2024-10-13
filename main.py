@@ -3,23 +3,44 @@ import os
 import platform
 import random
 from asyncio import sleep
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field, constr
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaPoll, Poll, PollAnswer, PollAnswerVoters, PollResults, TextWithEntities
 
 QUIZ_BOT = "QuizBot"
-SRC_DIR = Path("sources")
+QUIZ_SRC_DIR = Path("sources")
+QUIZ_FILEPATH = QUIZ_SRC_DIR / "example.yml"
+# ONLY_CHECK = True
+ONLY_CHECK = False
+
+
+class Question(BaseModel):
+    title: str = Field(min_length=1, max_length=2000)
+    incorrect_answers: list[constr(min_length=1, max_length=100)]
+    correct_answer: str = Field(min_length=1, max_length=100)
+    solution: str | None = Field(None, min_length=1, max_length=200)
+
+
+class Quiz(BaseModel):
+    quiz_title: str = Field(min_length=1, max_length=128)
+    quiz_desc: str | None = Field(None, min_length=1, max_length=1024)
+    questions: list[Question]
 
 
 class Waiter:
+    TIMEOUT = 5
+
     def __init__(self, client: TelegramClient, expected: str = None):
         self.client = client
         self.expected = expected
         self.event = events.NewMessage(chats=QUIZ_BOT)
         self.is_get_answer = False
+        self.start_ts = datetime.now().timestamp()
 
         async def wait_answer(event: events.NewMessage.Event):
             self.is_get_answer = True
@@ -35,14 +56,15 @@ class Waiter:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         while not self.is_get_answer:
             await sleep(0.5)
+            if datetime.now().timestamp() - self.start_ts > self.TIMEOUT:
+                raise TimeoutError(
+                    f"Время ожидания ответа бота превысило {self.TIMEOUT} секунд. Ожидаемый ответ {self.expected}"
+                )
 
         self.client.remove_event_handler(self.wait_answer, self.event)
 
 
-async def create_quiz(client: TelegramClient, file_path):
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-
+async def create_quiz(client: TelegramClient, quiz: Quiz):
     # Отменяем текущее состояние бота
     async with Waiter(client):
         await client.send_message(QUIZ_BOT, "/cancel")
@@ -53,21 +75,32 @@ async def create_quiz(client: TelegramClient, file_path):
 
     # Отправляем название
     async with Waiter(client, "пришлите описание"):
-        await client.send_message(QUIZ_BOT, data["quiz_title"])
+        await client.send_message(QUIZ_BOT, quiz.quiz_title)
 
     # Отправляем описание или пропускаем
     async with Waiter(client, "Отправьте мне первый вопрос"):
-        if data["quiz_desc"]:
-            await client.send_message(QUIZ_BOT, data["quiz_desc"])
+        if quiz.quiz_desc:
+            await client.send_message(QUIZ_BOT, quiz.quiz_desc)
         else:
             await client.send_message(QUIZ_BOT, "/skip")
 
     # Отправляем вопросы
-    for question in data["questions"]:
-        title = question["title"]
-        correct_answer = question["correct_answer"]
-        incorrect_answers = question["incorrect_answers"]
+    for question in quiz.questions:
+        if len(question.title) > 256:
+            title = "Выберите ответ"
+            message = question.title
+        else:
+            title = question.title
+            message = None
+        correct_answer = question.correct_answer
+        incorrect_answers = question.incorrect_answers
 
+        if message:
+            # Отправляем сообщение перед формой poll
+            async with Waiter(client, "будет показываться после этого сообщения"):
+                await client.send_message(QUIZ_BOT, message)
+
+        # Отправляем форму poll
         async with Waiter(client, "Теперь отправьте следующий"):
             await client.send_message(
                 QUIZ_BOT,
@@ -81,7 +114,11 @@ async def create_quiz(client: TelegramClient, file_path):
                         ],
                         quiz=True,
                     ),
-                    results=PollResults(results=[PollAnswerVoters(option=bytes(1), voters=200_000, correct=True)]),
+                    results=PollResults(
+                        results=[PollAnswerVoters(option=bytes(1), voters=200_000, correct=True)],
+                        solution=question.solution,
+                        solution_entities=[] if question.solution else None,
+                    ),
                 ),
             )
 
@@ -95,6 +132,12 @@ async def create_quiz(client: TelegramClient, file_path):
 
     # Указываем опцию ("Перемешать всё", "По порядку", "Только вопросы", "Только ответы")
     await client.send_message(QUIZ_BOT, "Только ответы")
+
+    await sleep(1)
+
+    message = await client.get_messages(QUIZ_BOT, limit=1)
+
+    print(message[-1].message)
 
 
 async def main():
@@ -111,10 +154,15 @@ async def main():
     )
 
     async with client:
-        for file in os.listdir(SRC_DIR):
-            if not file.endswith(".yml") or not os.path.isfile(SRC_DIR / file):
-                continue
-            await create_quiz(client, SRC_DIR / file)
+        # for file in os.listdir(QUIZ_SRC_DIR):
+        #     if not file.endswith(".yml") or not os.path.isfile(QUIZ_SRC_DIR / file):
+        with open(QUIZ_FILEPATH, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        quiz = Quiz(**data)
+
+        if not ONLY_CHECK:
+            await create_quiz(client, quiz)
 
 
 if __name__ == "__main__":
