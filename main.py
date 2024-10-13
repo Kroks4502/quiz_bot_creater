@@ -15,13 +15,12 @@ from telethon.tl.types import MessageMediaPoll, Poll, PollAnswer, PollAnswerVote
 QUIZ_BOT = "QuizBot"
 QUIZ_SRC_DIR = Path("sources")
 QUIZ_FILEPATH = QUIZ_SRC_DIR / "example.yml"
-# ONLY_CHECK = True
 ONLY_CHECK = False
 
 
 class Question(BaseModel):
     title: str = Field(min_length=1, max_length=2000)
-    incorrect_answers: list[constr(min_length=1, max_length=100)]
+    incorrect_answers: list[constr(min_length=1, max_length=100)] = Field(max_length=9)
     correct_answer: str = Field(min_length=1, max_length=100)
     solution: str | None = Field(None, min_length=1, max_length=200)
 
@@ -154,8 +153,6 @@ async def main():
     )
 
     async with client:
-        # for file in os.listdir(QUIZ_SRC_DIR):
-        #     if not file.endswith(".yml") or not os.path.isfile(QUIZ_SRC_DIR / file):
         with open(QUIZ_FILEPATH, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
